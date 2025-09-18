@@ -32,63 +32,6 @@ def RegressionLine(points):
     return np.array(centroid), np.array(direction)
 
 
-def project_3d_to_2d(point_3d, w, h):
-    """
-    将归一化的3D点投影到2D图像坐标
-    point: [x,y,z]，x,y 在 [0,1]，z忽略
-    w,h: 图像宽高
-    """
-    return (int(point_3d[0] * w), int(point_3d[1] * h))
-
-
-def landmark_to_np(landmark):
-    return np.array([landmark.x, landmark.y, landmark.z], dtype=np.float32)
-
-def PointTransform(point, origin, x_axis, y_axis):
-    """
-    坐标转换函数
-    
-    参数:
-    point: 要转换的点，可以是[x, y, z] / np.array / NormalizedLandmark
-    origin: 新坐标系原点
-    x_axis: 新坐标系X轴方向向量
-    y_axis: 新坐标系Y轴方向向量
-    
-    返回:
-    new_point: 点在新坐标系中的坐标[x', y', z']
-    """
-    # ---- 自动转换 NormalizedLandmark 类型 ----
-    if isinstance(point, landmark_pb2.NormalizedLandmark):
-        point = np.array([point.x, point.y, point.z])
-    if isinstance(origin, landmark_pb2.NormalizedLandmark):
-        origin = np.array([origin.x, origin.y, origin.z])
-    if isinstance(x_axis, landmark_pb2.NormalizedLandmark):
-        x_axis = np.array([x_axis.x, x_axis.y, x_axis.z])
-    if isinstance(y_axis, landmark_pb2.NormalizedLandmark):
-        y_axis = np.array([y_axis.x, y_axis.y, y_axis.z])
-
-    # 转换为numpy数组
-    point = np.asarray(point)
-    origin = np.asarray(origin)
-    x_axis = np.asarray(x_axis)
-    y_axis = np.asarray(y_axis)
-
-    # 计算Z轴
-    z_axis = np.cross(x_axis, y_axis)
-
-    # 归一化
-    x_axis = x_axis =  x_axis/ np.linalg.norm(x_axis) if np.linalg.norm(x_axis) > 1e-5 else x_axis
-    y_axis = y_axis =  y_axis/ np.linalg.norm(y_axis) if np.linalg.norm(y_axis) > 1e-5 else y_axis
-    z_axis = z_axis =  z_axis/ np.linalg.norm(z_axis) if np.linalg.norm(z_axis) > 1e-5 else z_axis
-    
-    # 构建旋转矩阵
-    rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
-    
-    # 计算点在手掌坐标系中的坐标
-    translated_point = point - origin
-    new_point = np.dot(rotation_matrix.T, translated_point)
-    
-    return new_point
 
 def CalculateTheta(v1, v2):
     v1 = np.asarray(v1, dtype=float)
