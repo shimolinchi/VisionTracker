@@ -9,10 +9,10 @@ from utils.image_tools import *
 
 class VisualTracker:
 
-    pos_cal = [0] * 16          # 计算出来的值（参考值0~1，但也可能大于1或小于0）
-    pos_now = [0] * 16          # 每个电机的当前位置    
-    pos_drive = [0] * 16        # 每个电机的实际驱动位置
-    current = [110] * 16         # 每个电机的电流限制
+    pos_cal = [0] * 16        # 计算出来的值（参考值0~1，但也可能大于1或小于0）
+    pos_now = [0] * 16        # 每个电机的当前位置    
+    pos_drive = [0] * 16      # 每个电机的实际驱动位置
+    current = [110] * 16      # 每个电机的电流限制
     velocity = [10] * 16
 
     HAND_LANDMARKS = {
@@ -40,12 +40,33 @@ class VisualTracker:
         # Mediapipe 初始化
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(static_image_mode=False, max_num_hands=1,
-                            min_detection_confidence=0.7, min_tracking_confidence=0.7)
+                                min_detection_confidence=0.7, min_tracking_confidence=0.7)
         self.mp_draw = mp.solutions.drawing_utils
 
         # 低通滤波器，平滑角度数据
         self.angle_filter = LowPassFilter(alpha=0.5)
         self.pos_filter = LowPassFilter_(alpha=0.5)
+
+        # --- 对指优化新增变量 ---
+        self.tip_distances = [0.0] * 4  # 存储食指、中指、无名指、小指指尖到大拇指指尖的距离
+        self.pointing_threadhold = 0.1  # 对指吸附的距离阈值 (归一化坐标系)
+        self.pointing_optimization_strength = 0.08 # 对指吸附强度因子
+
+        self.pointing_motor_position_norm = [[x/4096.0 for x in row] for row in [
+            [1900, 1900, 2950, 1200, 1200, 2418, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2000],
+            [2179, 2179, 2264, 0, 0, 0, 1482, 1482, 2200, 0, 0, 0, 0, 0, 0, 3145],
+            [2303, 2369, 2480, 0, 0, 0, 0, 0, 0, 1161, 1161, 2030, 0, 0, 0, 3940],
+            [1245, 2185, 2400, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1299, 1299, 1798, 4095]
+        ]]
+        
+        # 第二套对指姿态 (用于混合)
+        self.second_pointing_motor_position_norm = [[x/4096.0 for x in row] for row in [
+            [1900, 1900, 2950, 1200, 1200, 2418, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2000],
+            [2179, 2179, 2264, 0, 0, 0, 1482, 1482, 2200, 0, 0, 0, 0, 0, 0, 3145],
+            [2303, 2369, 2480, 0, 0, 0, 0, 0, 0, 1161, 1161, 2030, 0, 0, 0, 3940],
+            [1245, 2185, 2400, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1299, 1299, 1798, 4095]
+        ]]
+        # ------------------------
 
 
     def calc_hand_axes(self, pts):
@@ -164,7 +185,7 @@ class VisualTracker:
         # 每个关节的文字偏移 & 颜色
         offset_rules = {"CMC_flex": (7, -18),"MCP_flex": (7, -12), "MCP_abduction": (7, 12), "PIP": (7, -7), "DIP": (7, -7),"IP": (7, -7)}
         color_rules = {"CMC_flex": (255, 128, 0), "MCP_flex": (0,128,255), "MCP_abduction": (0,128,255),
-                    "PIP": (0,255,0), "DIP": (255,0,0), "IP": (0,255,0)}
+                       "PIP": (0,255,0), "DIP": (255,0,0), "IP": (0,255,0)}
 
         for finger, joint_angles in angles.items():
             for joint, value in joint_angles.items():
@@ -173,7 +194,7 @@ class VisualTracker:
                 idx = angle_to_point[finger][joint]
                 u, v = int(landmarks[idx][0] * width), int(landmarks[idx][1] * height)
                 AnnotateText(image, (u, v), f"{value:.1f}",
-                                color=color_rules[joint], offset=offset_rules[joint])
+                             color=color_rules[joint], offset=offset_rules[joint])
         return image
 
     def draw_axis(self, image, wrist, x_axis, y_axis, z_axis, length_ratio=0.12):
@@ -188,9 +209,9 @@ class VisualTracker:
         z_end = (int(origin_px[0] + z_axis[0] * length_px), int(origin_px[1] + z_axis[1] * length_px))
 
         # 绘制坐标轴
-        cv2.arrowedLine(image, origin_px, x_end, (0, 0, 255), 2, tipLength=0.2)   # X 红
-        cv2.arrowedLine(image, origin_px, y_end, (0, 255, 0), 2, tipLength=0.2)  # Y 绿
-        cv2.arrowedLine(image, origin_px, z_end, (255, 0, 0), 2, tipLength=0.2)  # Z 蓝
+        cv2.arrowedLine(image, origin_px, x_end, (0, 0, 255), 2, tipLength=0.2)  # X 红
+        cv2.arrowedLine(image, origin_px, y_end, (0, 255, 0), 2, tipLength=0.2) # Y 绿
+        cv2.arrowedLine(image, origin_px, z_end, (255, 0, 0), 2, tipLength=0.2) # Z 蓝
 
         # 标注文字
         cv2.putText(image, "X", (x_end[0] + 4, x_end[1] + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
@@ -230,7 +251,6 @@ class VisualTracker:
             if buf is None or len(buf) < 3:
                 continue  # 没读到数据，或者数据太短，跳过
             state = parse_finger_feedback(buf)
-            # === 确定电机编号 ===
             motor_index = (can_id - 257) % 16  # ID=257~272 对应 16 个电机
             pos = state["P"]
             self.pos_now[motor_index] = pos
@@ -241,6 +261,78 @@ class VisualTracker:
             error = abs(self.pos_now[i] - self.pos_drive[i])
             self.velocity[i] = int(error * 1.2 + 50)
             self.velocity[i] = max(min(self.velocity[i], 1900), 0)
+
+    def pointing_optimize(self):
+        """
+        基于指尖距离，优化对指姿态 (姿态吸附)
+        此方法会直接修改 self.pos_cal
+        """
+        try:
+            # 找到距离大拇指最近的指尖
+            closest_tip_index = np.argmin(self.tip_distances) # 0=食指, 1=中指, 2=无名指, 3=小指
+            closest_tip_distance = self.tip_distances[closest_tip_index]
+
+            # 获取最近手指对应的目标对指姿态
+            target_pose_1 = self.pointing_motor_position_norm[closest_tip_index]
+            target_pose_2 = self.second_pointing_motor_position_norm[closest_tip_index]
+
+            # 对应于 [3,4] [6,7] [9,10] [12,13]
+            mcp_motor_idx_map = {
+                0: (3, 4),   # 食指
+                1: (6, 7),   # 中指
+                2: (9, 10),  # 无名指
+                3: (12, 13)  # 小指
+            }
+            m1_idx, m2_idx = mcp_motor_idx_map[closest_tip_index]
+            
+            # 计算当前MCP弯曲归一化值
+            mcp_stretch_norm = (self.pos_cal[m1_idx] + self.pos_cal[m2_idx]) / 2.0
+            
+            # 计算目标姿态的MCP弯曲值
+            target_mcp_stretch = (target_pose_1[m1_idx] + target_pose_1[m2_idx]) / 2.0
+            
+            if target_mcp_stretch > 1e-6: # 避免除零
+                # 使用 map_value 进行重映射
+                mcp_stretch_norm = map_value(mcp_stretch_norm, 0.0, target_mcp_stretch, 0.0, 1.0)
+            else:
+                mcp_stretch_norm = 0.0
+            
+            mcp_stretch_norm = np.clip(mcp_stretch_norm, 0.0, 1.0)
+            
+            # 线性插值（lerp）混合两个目标姿态
+            blended_target_pose = [0.0] * 16
+            for i in range(16):
+                blended_target_pose[i] = mcp_stretch_norm * target_pose_1[i] + (1.0 - mcp_stretch_norm) * target_pose_2[i]
+
+            if closest_tip_distance < 1e-6:
+                # 距离极近，直接吸附到目标姿态
+                for i in range(16):
+                    if blended_target_pose[i] > 1e-6: # 只优化和对指相关的电机 (即目标值>0)
+                        self.pos_cal[i] = blended_target_pose[i]
+                        
+            elif closest_tip_distance < self.pointing_threadhold:
+                # 在阈值内，按距离拉近到目标姿态
+                for i in range(16):
+                    if blended_target_pose[i] > 1e-6: # 只优化和对指相关的电机
+                        
+                        diff = blended_target_pose[i] - self.pos_cal[i]
+                        
+                        # adjustment 是基于距离计算的"拉力"
+                        adjustment = self.pointing_optimization_strength * diff / closest_tip_distance
+                        
+                        # 确保"拉力"不会超过原始差值
+                        if diff > 0:
+                            # 目标 > 当前值 (向上拉)
+                            adjustment = np.clip(adjustment, 0.0, diff)
+                        else:
+                            # 目标 < 当前值 (向下拉)
+                            adjustment = np.clip(adjustment, diff, 0.0)
+                            
+                        self.pos_cal[i] += adjustment
+        
+        except Exception as e:
+            print(f"Error in pointing_optimize: {e}")
+
 
     def track(self):
         try:
@@ -271,6 +363,13 @@ class VisualTracker:
                     # 取第一个手的关键点
                     landmarks = np.array([[lm.x, lm.y, lm.z] for lm in results.multi_hand_landmarks[0].landmark])
 
+                    # 计算指尖距离
+                    thumb_tip = landmarks[self.HAND_LANDMARKS["THUMB_TIP"]]
+                    self.tip_distances[0] = np.linalg.norm(landmarks[self.HAND_LANDMARKS["INDEX_TIP"]] - thumb_tip)
+                    self.tip_distances[1] = np.linalg.norm(landmarks[self.HAND_LANDMARKS["MIDDLE_TIP"]] - thumb_tip)
+                    self.tip_distances[2] = np.linalg.norm(landmarks[self.HAND_LANDMARKS["RING_TIP"]] - thumb_tip)
+                    self.tip_distances[3] = np.linalg.norm(landmarks[self.HAND_LANDMARKS["PINKY_TIP"]] - thumb_tip)
+
                     # 手坐标系
                     axes = self.calc_hand_axes(landmarks)
 
@@ -278,29 +377,29 @@ class VisualTracker:
                     angles, wrist = self.calc_hand_angles(landmarks, axes)
                     # angles = angle_filter.filter(angles)
                     j = []
-                    j.append(map_value(angles["thumb"]["MCP_flex"],         3,  10,  0, 1))   # 0
-                    j.append(map_value(angles["thumb"]["MCP_abduction"],   24,  72,  0, 1))   # 1
-                    j.append(map_value(angles["thumb"]["IP"],             165, 145,  0, 1))   # 2
+                    j.append(map_value(angles["thumb"]["MCP_flex"],       3,   10,  0, 1))   # 0
+                    j.append(map_value(angles["thumb"]["MCP_abduction"],  24,   72,  0, 1))   # 1
+                    j.append(map_value(angles["thumb"]["IP"],            165, 145,  0, 1))   # 2
 
                     j.append(map_value(angles["index"]["MCP_flex"],       167, 140,  0, 1))   # 3
                     j.append(map_value(angles["index"]["MCP_abduction"],  45 , 75 , -1, 1))   # 4
-                    j.append(map_value(angles["index"]["PIP"],            175, 135,  0, 1))   # 5
-                    j.append(map_value(angles["index"]["DIP"],            175,  100,  0, 1))  # 6
+                    j.append(map_value(angles["index"]["PIP"],           175, 135,  0, 1))   # 5
+                    j.append(map_value(angles["index"]["DIP"],           175,  100,  0, 1))  # 6
 
                     j.append(map_value(angles["middle"]["MCP_flex"],      175, 140,  0, 1))   # 7
-                    j.append(map_value(angles["middle"]["MCP_abduction"],  80,  56, -1, 1))   # 8
-                    j.append(map_value(angles["middle"]["PIP"],           175, 120,  0, 1))   # 9
-                    j.append(map_value(angles["middle"]["DIP"],           176,  100, 0, 1))   # 10
+                    j.append(map_value(angles["middle"]["MCP_abduction"], 80,   56, -1, 1))   # 8
+                    j.append(map_value(angles["middle"]["PIP"],          175, 120,  0, 1))   # 9
+                    j.append(map_value(angles["middle"]["DIP"],          176,  100, 0, 1))   # 10
 
                     j.append(map_value(angles["ring"]["MCP_flex"],        173, 140,  0, 1))   # 11
-                    j.append(map_value(angles["ring"]["MCP_abduction"],    86,  65, -1, 1))   # 12
-                    j.append(map_value(angles["ring"]["PIP"],             174, 132,  0, 1))   # 13
-                    j.append(map_value(angles["ring"]["DIP"],             175, 100,  0, 1))   # 14
+                    j.append(map_value(angles["ring"]["MCP_abduction"],   86,   65, -1, 1))   # 12
+                    j.append(map_value(angles["ring"]["PIP"],            174, 132,  0, 1))   # 13
+                    j.append(map_value(angles["ring"]["DIP"],            175, 100,  0, 1))   # 14
 
                     j.append(map_value(angles["pinky"]["MCP_flex"],       167, 130,  0, 1))   # 15
-                    j.append(map_value(angles["pinky"]["MCP_abduction"],  105,  67, -1, 1))   # 16
-                    j.append(map_value(angles["pinky"]["PIP"],            172, 125,  0, 1))   # 17
-                    j.append(map_value(angles["pinky"]["DIP"],            173, 100,  0, 1))   # 18
+                    j.append(map_value(angles["pinky"]["MCP_abduction"], 105,   67, -1, 1))   # 16
+                    j.append(map_value(angles["pinky"]["PIP"],           172, 125,  0, 1))   # 17
+                    j.append(map_value(angles["pinky"]["DIP"],           173, 100,  0, 1))   # 18
 
                     if angles["index"]["MCP_abduction"] < 0: j[4] = 0  #处理当握拳且角度朝下的时候，会出现MCP侧摆值为负的情况，此时握拳因此全部为最大值
                     if angles["middle"]["MCP_abduction"] < 0:j[8] = 0  #处理当握拳且角度朝下的时候，会出现MCP侧摆值为负的情况，此时握拳因此全部为最大值
@@ -330,8 +429,8 @@ class VisualTracker:
 
 
                     # 中指
-                    j[7] -= (abs(j[8]) * 0.25)      # 使用MCP侧摆角度来纠正MCP弯曲的角度，
-                    if j[7] > 0.4: j[8] = 0.0       # 当食指MCP弯曲大于0.4时，侧摆角度归零（弯曲到极限姿势，防止手指姿势过于怪异）
+                    j[7] -= (abs(j[8]) * 0.25)    # 使用MCP侧摆角度来纠正MCP弯曲的角度，
+                    if j[7] > 0.4: j[8] = 0.0     # 当食指MCP弯曲大于0.4时，侧摆角度归零（弯曲到极限姿势，防止手指姿势过于怪异）
                     self.pos_cal[6]  = 0.65 * j[7] - 0.35 * j[8] if j[8] < 0 else j[7]  # 中指 MCP 关节 远大拇指电机
                     self.pos_cal[7]  = 0.6 * j[7] + 0.4 * j[8] if j[8] > 0 else j[7]  # 中指 MCP 关节 近大拇指电机
 
@@ -350,6 +449,9 @@ class VisualTracker:
                     self.pos_cal[13] = 0.5 * j[15] + 0.5 * j[16] if j[16] > 0 else j[15]  # 小拇指 MCP 关节 近大拇指电机
                     if j[15] >= 1:self.pos_cal[12] = self.pos_cal[13] = 1
 
+                    # 对指优化
+                    self.pointing_optimize()
+
                     self.pos_cal = [max(0.0, min(1.0, x)) for x in self.pos_cal]  # 限幅到 [0, 1]
                     
 
@@ -358,7 +460,7 @@ class VisualTracker:
 
                     self.send_predefined_action(self.velocity, self.pos_drive, self.current)
                     self.get_motor_positions()  # 读取电机反馈
-                    print(self.pos_drive[2], self.pos_now[2])
+                    # print(self.pos_drive[2], self.pos_now[2])
                     self.set_motor_velocities()
                     # print(f'{pos_now[0]}\t{pos_drive[0]}\t{pos_now[1]}\t{pos_drive[1]}')
                     # print(pos_now)
