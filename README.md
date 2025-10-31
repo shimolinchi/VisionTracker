@@ -40,7 +40,7 @@ pip install -r requirements.txt
 
 确保摄像头可用（默认 cv2.VideoCapture(0)，也可选择使用 pyrealsense 获取摄像头数据流）
 
-将 PCAN 设备连接到机械手（确保驱动安装）
+将 PCAN 设备连接到灵巧手（确保驱动安装）
 
 ### 运行
 ```
