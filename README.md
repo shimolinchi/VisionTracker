@@ -1,64 +1,11 @@
-# Visual Hand Tracker for Robotic Hand Control
+# Visual Hand Tracker
 **双语 README / Bilingual README**
 
-![Demo](demo.gif)
+![](demo1.gif)
+![Demo](demo2.gif)
 
----
 
-
-### Overview
-This project uses **OpenCV + MediaPipe + PCAN** to perform real-time hand joint tracking and map the results and control the ruiyan-H1 hand.
-
-### Features
-- Hand landmark detection via **MediaPipe Hands**  
-- Automatic construction of palm local coordinate system  
-- Joint angle calculation for each finger  
-- Real-time visualization of axes and joint angles in video stream  
-- Mapping of joint angles to motor control signals through **PCAN bus**  
-- Built-in filter to reduce jitter  
-
-### Installation
-
-The project need python 3.9, ruiyan-H1 hand (16dof)
-Clone and install dependencies (listed in `requirements.txt`):
-
-```bash
-cd visual-hand-tracker
-pip install -r requirements.txt
-```
-
-### Usage
-
-Hardware setup
-
-Ensure camera is available (default cv2.VideoCapture(0))
-
-Connect PCAN device to robotic hand
-
-### Run
-```
-python example.py
-```
-
-Or directly use the VisualTracker class with the track() method.
-
-Expected results
-
-Window displays hand landmarks, local axes, and real-time joint angles
-
-Angles are mapped to target motor positions and sent via CAN
-
-### Project Structure
-```
-├── VisualTracker.py     # Core class: hand tracking + motor control
-├── utils/
-│   ├── math_tools.py    # Vector operations, angle calculations
-│   ├── image_tools.py   # Drawing and annotation functions
-├── requirements.txt     # Dependencies
-├── main.py              # Example entry point
-```
-
-本项目基于 OpenCV + MediaPipe + CAN 总线，实现手部关节角度的实时追踪，并将结果映射到 16 路电机，从而驱动仿生机械手。
+本项目基于 OpenCV + MediaPipe，实现灵巧手的视觉遥操作。使用的灵巧手为睿研智控 RY-H1(16)。
 
 ### 功能特点
 
@@ -70,22 +17,28 @@ Angles are mapped to target motor positions and sent via CAN
 
 视频流中实时可视化坐标轴和关节角度
 
-将角度映射为电机控制信号，通过 PCAN 总线 下发
+进行对指距离检测，对对指进行优化
+
+将关节角度映射为电机控制信号，通过 PCAN 下发
 
 内置滤波器，降低抖动，提高稳定性
 
 ### 安装
 
+python环境 3.9
 克隆并安装依赖（依赖在 requirements.txt 中）：
 ```
-cd visual-hand-tracker
+cd VisionTracker
 pip install -r requirements.txt
 ```
+
+注意：若使用 L515 摄像头且使用 pyrealsense 的话，需要安装 pyrealsense 2.50.0.3812 版本，需要到官网上下载其whl文件后手动安装（由于该摄像头现已停产，因此更新版本的pyrealsense不可使用）
+
 ## 使用方法
 
 ### 硬件准备
 
-确保摄像头可用（默认 cv2.VideoCapture(0)）
+确保摄像头可用（默认 cv2.VideoCapture(0)，也可选择使用 pyrealsense 获取摄像头数据流）
 
 将 PCAN 设备连接到机械手（确保驱动安装）
 
@@ -100,7 +53,7 @@ python example.py
 
 窗口中显示手部关键点、局部坐标轴和实时关节角度
 
-角度自动映射为电机目标位置，并通过 CAN 下发
+角度自动映射为电机目标位置，并通过 PCAN 下发
 
 ### 代码结构
 ```

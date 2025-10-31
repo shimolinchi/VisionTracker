@@ -23,7 +23,7 @@ class VisualTracker:
     "RING_MCP": 13, "RING_PIP": 14, "RING_DIP": 15, "RING_TIP": 16,
     "PINKY_MCP": 17, "PINKY_PIP": 18, "PINKY_DIP": 19, "PINKY_TIP": 20,
     }
-    def __init__(self):
+    def __init__(self, pointing_positions, second_pointing_positions, pointing_strenth, pointing_threadhold):
         # # RealSense 摄像头初始化
         # pipeline = rs.pipeline()
         # config = rs.config()
@@ -31,10 +31,10 @@ class VisualTracker:
         # pipeline.start(config)
 
         self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
 
         # Mediapipe 初始化
@@ -47,27 +47,15 @@ class VisualTracker:
         self.angle_filter = LowPassFilter(alpha=0.5)
         self.pos_filter = LowPassFilter_(alpha=0.5)
 
-        # --- 对指优化新增变量 ---
+        # 对指优化变量
         self.tip_distances = [0.0] * 4  # 存储食指、中指、无名指、小指指尖到大拇指指尖的距离
-        self.pointing_threadhold = 0.1  # 对指吸附的距离阈值 (归一化坐标系)
-        self.pointing_optimization_strength = 0.08 # 对指吸附强度因子
+        self.pointing_optimization_threadhold = pointing_threadhold  # 对指吸附的距离阈值 (归一化坐标系)
+        self.pointing_optimization_strength = pointing_strenth
 
-        self.pointing_motor_position_norm = [[x/4096.0 for x in row] for row in [
-            [1900, 1900, 2950, 1200, 1200, 2418, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2000],
-            [2179, 2179, 2264, 0, 0, 0, 1482, 1482, 2200, 0, 0, 0, 0, 0, 0, 3145],
-            [2303, 2369, 2480, 0, 0, 0, 0, 0, 0, 1161, 1161, 2030, 0, 0, 0, 3940],
-            [1245, 2185, 2400, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1299, 1299, 1798, 4095]
-        ]]
+        self.pointing_motor_position_norm = [[x/4096.0 for x in row] for row in pointing_positions]
         
-        # 第二套对指姿态 (用于混合)
-        self.second_pointing_motor_position_norm = [[x/4096.0 for x in row] for row in [
-            [1900, 1900, 2950, 1200, 1200, 2418, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2000],
-            [2179, 2179, 2264, 0, 0, 0, 1482, 1482, 2200, 0, 0, 0, 0, 0, 0, 3145],
-            [2303, 2369, 2480, 0, 0, 0, 0, 0, 0, 1161, 1161, 2030, 0, 0, 0, 3940],
-            [1245, 2185, 2400, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1299, 1299, 1798, 4095]
-        ]]
-        # ------------------------
-
+        # 第二套对指姿态
+        self.second_pointing_motor_position_norm = [[x/4096.0 for x in row] for row in second_pointing_positions]
 
     def calc_hand_axes(self, pts):
         """
@@ -299,7 +287,7 @@ class VisualTracker:
             
             mcp_stretch_norm = np.clip(mcp_stretch_norm, 0.0, 1.0)
             
-            # 线性插值（lerp）混合两个目标姿态
+            # 线性插值混合两个目标姿态
             blended_target_pose = [0.0] * 16
             for i in range(16):
                 blended_target_pose[i] = mcp_stretch_norm * target_pose_1[i] + (1.0 - mcp_stretch_norm) * target_pose_2[i]
@@ -310,7 +298,7 @@ class VisualTracker:
                     if blended_target_pose[i] > 1e-6: # 只优化和对指相关的电机 (即目标值>0)
                         self.pos_cal[i] = blended_target_pose[i]
                         
-            elif closest_tip_distance < self.pointing_threadhold:
+            elif closest_tip_distance < self.pointing_optimization_threadhold:
                 # 在阈值内，按距离拉近到目标姿态
                 for i in range(16):
                     if blended_target_pose[i] > 1e-6: # 只优化和对指相关的电机
@@ -423,7 +411,6 @@ class VisualTracker:
                     j[3] -= ((abs(j[4]) + 0.1) * 0.4 - 0.25)  # 使用MCP侧摆角度来纠正MCP弯曲的角度，
                     j[4] -= 0.2                               # 侧摆角度偏移
                     if j[3] > 0.6:j[4] = 0.0                  # 当食指MCP弯曲大于0.6时，侧摆角度归零（弯曲到极限姿势，防止手指姿势过于怪异）
-                    # print(f'{pos_cal[5]:.1f}\t{pos_cal[9]:.1f}\t{pos_cal[12]:.1f}\t{pos_cal[15]:.1f}')
                     self.pos_cal[3]  = 0.7 * j[3] + 0.3 * j[4] if j[4] > 0 else j[3]  # 食指 MCP 关节 远大拇指电机
                     self.pos_cal[4]  = 0.6 * j[3] - 0.4 * j[4] if j[4] < 0 else j[3]  # 食指 MCP 关节 近大拇指电机
 
@@ -484,9 +471,9 @@ class VisualTracker:
             cv2.destroyAllWindows()
             # pipeline.stop()
 
-if __name__ == "__main__":
-    try:
-        mytracker = VisualTracker()
-        mytracker.track()
-    except Exception as e:
-        print(e)
+# if __name__ == "__main__":
+#     try:
+#         mytracker = VisualTracker()
+#         mytracker.track()
+#     except Exception as e:
+#         print(e)
