@@ -1,5 +1,4 @@
 # Visual Hand Tracker
-**双语 README / Bilingual README**
 
 ![](demo1.gif)
 ![Demo](demo2.gif)
